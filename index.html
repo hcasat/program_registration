@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hospital L&D Portal</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js" type="module"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js" type="module"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .carousel-container {
+            display: flex;
+            overflow-x: auto;
+            scroll-snap-type: x mandatory;
+            gap: 1.5rem;
+            padding-bottom: 1rem;
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        .carousel-container::-webkit-scrollbar { display: none; }
+        .carousel-item {
+            flex: 0 0 auto;
+            width: 300px; /* Fixed width */
+            scroll-snap-align: start;
+            transition: transform 0.3s;
+        }
+        /* Aspect Ratio 8.5/11 ~ 0.77 */
+        .poster-aspect {
+            aspect-ratio: 8.5 / 11;
+        }
+        .carousel-item:hover { transform: translateY(-5px); }
+        .modal {
+            background-color: rgba(0,0,0,0.5);
+            transition: opacity 0.3s ease;
+        }
+        .loader {
+            border: 4px solid #f3f4f6;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* Animation for modal */
+        @keyframes fade-in-up {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-fade-in-up {
+            animation: fade-in-up 0.3s ease-out;
+        }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <!-- Branding Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-center py-4">
+                <img src="https://i.imgur.com/91LXRNG.png" alt="Hospital L&D Branding" class="h-24 object-contain">
+            </div>
+            <nav class="flex justify-between items-center py-2 border-t border-gray-100 text-sm">
+                <div class="flex space-x-4">
+                    <button onclick="router.navigate('home')" class="text-gray-600 hover:text-blue-600 font-medium"><i class="fas fa-home mr-1"></i> Home</button>
+                    <button onclick="router.navigate('my-registration')" class="text-gray-600 hover:text-blue-600 font-medium"><i class="fas fa-ticket-alt mr-1"></i> My Registration</button>
+                </div>
+                <div id="auth-section">
+                    <!-- Dynamic Auth Buttons -->
+                </div>
+            </nav>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main id="app-root" class="flex-grow max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Views rendered here -->
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-white border-t mt-auto">
+        <div class="max-w-7xl mx-auto py-6 px-4 flex justify-between items-center">
+            <p class="text-gray-500 text-sm">© 2026 Healthcare Academy - Systems and Technical Training</p>
+            <button id="educator-login-btn" class="text-xs text-gray-400 hover:text-blue-600">Educator Portal</button>
+        </div>
+    </footer>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-gray-800 text-white px-4 py-2 rounded shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 z-50"></div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        // --- CONFIGURATION ---
+        const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbz8IY4p9Jlfit6JPGZmIy2t7YX3K9-VvbacAa3Jb5DTRavVD3-cipOm8kKExL_n40Z3/exec"; 
+        
+        const firebaseConfig = {
+             apiKey: "AIzaSyBSS4XyJYWeydlrn6SqwJBhT7M06rMNU1E",
+             authDomain: "familydayapp-e66f6.firebaseapp.com",
+             projectId: "familydayapp-e66f6",
+             storageBucket: "familydayapp-e66f6.firebasestorage.app",
+             messagingSenderId: "482544326186",
+             appId: "1:482544326186:web:30f32d22f9abfb43891553",
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = "default-app-id"; 
+
+        // Helper to get collection refs
+        const getColRef = (colName) => collection(db, 'artifacts', appId, 'public', 'data', colName);
+
+        // --- STATE MANAGEMENT ---
+        const state = {
+            user: null,
+            isEducator: false,
+            programs: [],
+            currentProgram: null,
+            view: 'home'
+        };
+
+        // --- UTILS ---
+        const formatDateTimeRange = (startIso, endIso) => {
+            if(!startIso || !endIso) return 'TBD';
+            const start = new Date(startIso);
+            const end = new Date(endIso);
+            const dateOpts = { month: 'short', day: 'numeric', year: 'numeric' };
+            const timeOpts = { hour: 'numeric', minute: '2-digit', hour12: true };
+            
+            if(start.toDateString() === end.toDateString()) {
+                return `${start.toLocaleDateString('en-US', dateOpts)}, ${start.toLocaleTimeString('en-US', timeOpts)} - ${end.toLocaleTimeString('en-US', timeOpts)}`;
+            } else {
+                return `${start.toLocaleDateString('en-US', dateOpts)} ${start.toLocaleTimeString('en-US', timeOpts)} - ${end.toLocaleDateString('en-US', dateOpts)} ${end.toLocaleTimeString('en-US', timeOpts)}`;
+            }
+        };
+
+        const showToast = (msg, type='info') => {
+            const el = document.getElementById('toast');
+            el.innerText = msg;
+            el.className = `fixed bottom-5 right-5 px-6 py-3 rounded shadow-lg text-white transform transition-all duration-300 z-50 ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`;
+            el.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => el.classList.add('translate-y-20', 'opacity-0'), 3000);
+        };
+
+        // Custom UI Dialogs
+        const showConfirmationModal = (message, onConfirm) => {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-fade-in-up">
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">Confirmation Required</h3>
+                    <p class="text-gray-600 mb-6">${message}</p>
+                    <div class="flex justify-end space-x-3">
+                        <button id="cancel-btn" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded font-medium">Cancel</button>
+                        <button id="confirm-btn" class="px-4 py-2 bg-blue-600 text-white rounded font-medium hover:bg-blue-700">Confirm</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('cancel-btn').onclick = () => modal.remove();
+            document.getElementById('confirm-btn').onclick = () => {
+                modal.remove();
+                onConfirm();
+            };
+        };
+
+        const showSuccessModal = (title, message, onClose) => {
+            const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 animate-fade-in-up text-center">
+                    <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-green-100 mb-4">
+                        <i class="fas fa-check text-green-600 text-xl"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-900 mb-2">${title}</h3>
+                    <div class="text-gray-600 mb-6 text-sm">${message}</div>
+                    <button id="ok-btn" class="w-full px-4 py-2 bg-green-600 text-white rounded font-medium hover:bg-green-700">OK</button>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('ok-btn').onclick = () => {
+                modal.remove();
+                if(onClose) onClose();
+            };
+        };
+        
+        // --- EMAIL SERVICE (GAS) ---
+        const sendEmail = async (type, payload) => {
+            if (!GAS_ENDPOINT || GAS_ENDPOINT.includes("PASTE_YOUR")) {
+                console.warn("Email not sent. GAS Endpoint not configured.");
+                return;
+            }
+            try {
+                await fetch(GAS_ENDPOINT, {
+                    method: 'POST',
+                    mode: 'no-cors', // standard for GAS Web Apps
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type, ...payload })
+                });
+                console.log("Email request sent to GAS");
+            } catch (e) {
+                console.error("Email failed", e);
+            }
+        };
+
+        // --- ROUTER & VIEWS ---
+        const router = {
+            navigate: (viewName, params = null) => {
+                state.view = viewName;
+                renderApp(params);
+            }
+        };
+        
+        // Expose router to window for onclick events
+        window.router = router;
+
+        // --- RENDERERS ---
+        const root = document.getElementById('app-root');
+
+        function renderApp(params) {
+            root.innerHTML = '';
+            
+            // Render Auth Header
+            renderAuthHeader();
+
+            switch(state.view) {
+                case 'home': renderHome(); break;
+                case 'program-detail': renderProgramDetail(params); break;
+                case 'my-registration': renderMyRegistration(); break;
+                case 'educator-login': renderEducatorLogin(); break;
+                case 'educator-dashboard': renderEducatorDashboard(); break;
+                case 'educator-program': renderEducatorProgram(params); break;
+                default: renderHome();
+            }
+        }
+
+        function renderAuthHeader() {
+            const container = document.getElementById('auth-section');
+            container.innerHTML = '';
+            if (state.isEducator) {
+                const btn = document.createElement('button');
+                btn.className = 'text-red-500 hover:text-red-700 text-sm font-semibold';
+                btn.innerHTML = '<i class="fas fa-sign-out-alt"></i> Logout';
+                btn.onclick = () => {
+                    signOut(auth);
+                    state.isEducator = false;
+                    router.navigate('home');
+                };
+                const dash = document.createElement('button');
+                dash.className = 'text-blue-600 hover:text-blue-800 text-sm font-semibold mr-4';
+                dash.innerText = 'Dashboard';
+                dash.onclick = () => router.navigate('educator-dashboard');
+                container.appendChild(dash);
+                container.appendChild(btn);
+            }
+        }
+
+        // 1. HOME VIEW
+        async function renderHome() {
+            root.innerHTML = `
+                <div class="mb-8 text-center">
+                    <h1 class="text-3xl font-bold text-gray-800">Systems and Technical Training Programs</h1>
+                    <p class="text-gray-500 mt-2">Select a program to register or view details.</p>
+                </div>
+                <div id="loading" class="flex justify-center"><div class="loader"></div></div>
+                <div id="carousel" class="carousel-container hidden"></div>
+            `;
+
+            try {
+                const snap = await getDocs(getColRef('programs'));
+                const programs = snap.docs.map(d => ({id: d.id, ...d.data()}));
+                const carousel = document.getElementById('carousel');
+                document.getElementById('loading').classList.add('hidden');
+                carousel.classList.remove('hidden');
+
+                if (programs.length === 0) {
+                    carousel.innerHTML = '<p class="w-full text-center text-gray-400">No active programs at the moment.</p>';
+                    return;
+                }
+
+                programs.forEach(p => {
+                    const card = document.createElement('div');
+                    card.className = "carousel-item bg-white rounded-lg shadow-md overflow-hidden cursor-pointer border hover:border-blue-400";
+                    card.innerHTML = `
+                        <div class="poster-aspect w-full bg-gray-200">
+                            <img src="${p.posterUrl}" onerror="this.src='https://via.placeholder.com/300x388?text=No+Image'" class="w-full h-full object-cover">
+                        </div>
+                        <div class="p-4">
+                            <div class="flex justify-between items-start">
+                                <h3 class="font-bold text-lg text-gray-800 truncate flex-grow">${p.name}</h3>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1 line-clamp-2">${p.details}</p>
+                            <div class="mt-3">
+                                ${p.nominationUrl ? 
+                                    '<span class="bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full">Nomination Only</span>' : 
+                                    '<span class="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">Open Registration</span>'}
+                            </div>
+                        </div>
+                    `;
+                    card.onclick = () => router.navigate('program-detail', p);
+                    carousel.appendChild(card);
+                });
+            } catch (err) {
+                console.error(err);
+                showToast("Error loading programs", 'error');
+            }
+        }
+
+        // 2. PROGRAM DETAIL
+        async function renderProgramDetail(program) {
+            root.innerHTML = `
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden max-w-4xl mx-auto">
+                    <div class="md:flex">
+                        <div class="md:w-1/3 bg-gray-100 flex items-start justify-center p-4">
+                            <img src="${program.posterUrl}" class="w-full h-auto shadow-md rounded poster-aspect object-contain" style="max-height: 80vh;" onerror="this.src='https://via.placeholder.com/300x400'">
+                        </div>
+                        <div class="p-8 md:w-2/3">
+                            <button onclick="router.navigate('home')" class="text-gray-400 hover:text-gray-600 mb-4"><i class="fas fa-arrow-left"></i> Back</button>
+                            <h2 class="text-3xl font-bold text-gray-800 mb-1">${program.name}</h2>
+                            <p class="text-gray-600 mb-6 leading-relaxed">${program.details}</p>
+                            
+                            <h3 class="font-bold text-lg border-b pb-2 mb-4">Available Sessions (Runs)</h3>
+                            <div id="runs-list" class="space-y-3">
+                                <div class="loader mx-auto"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Fetch Runs
+            const q = query(getColRef('runs'), where('programId', '==', program.id));
+            const snap = await getDocs(q);
+            const runsList = document.getElementById('runs-list');
+            runsList.innerHTML = '';
+            
+            const runs = snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => new Date(a.startDate) - new Date(b.startDate));
+            const now = new Date();
+
+            if (runs.length === 0) {
+                runsList.innerHTML = '<p class="text-gray-400 italic">No sessions scheduled yet.</p>';
+                return;
+            }
+
+            runs.forEach(run => {
+                const runDate = new Date(run.startDate);
+                const isPast = runDate < now;
+                
+                getParticipantsCount(run.id).then(count => {
+                    const isFull = count >= parseInt(run.maxParticipants);
+                    const isDisabled = isPast || (isFull && !program.nominationUrl);
+                    
+                    const el = document.createElement('div');
+                    el.className = `p-4 border rounded-lg flex justify-between items-center ${isDisabled ? 'bg-gray-100 opacity-70' : 'bg-blue-50 border-blue-100'}`;
+                    
+                    let btnHtml = '';
+                    if (program.nominationUrl) {
+                         btnHtml = `<a href="${program.nominationUrl}" target="_blank" class="text-purple-600 font-bold hover:underline text-sm">Nomination Form <i class="fas fa-external-link-alt"></i></a>`;
+                    } else if (isPast) {
+                        btnHtml = `<span class="text-gray-500 font-bold text-sm">Ended</span>`;
+                    } else if (isFull) {
+                        btnHtml = `<span class="text-red-500 font-bold text-sm">Full</span>`;
+                    } else {
+                        btnHtml = `<button class="register-btn bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm transition shadow-sm">Register</button>`;
+                    }
+
+                    el.innerHTML = `
+                        <div>
+                            <div class="font-bold text-gray-800 text-sm">${formatDateTimeRange(run.startDate, run.endDate)}</div>
+                            <div class="text-sm text-gray-600 mt-1">
+                                <span class="font-semibold text-blue-600">${run.site || 'Global City'}</span> |
+                                <i class="fas fa-map-marker-alt"></i> ${run.venue || 'TBD'} | Capacity: ${run.maxParticipants}
+                            </div>
+                            <div class="text-xs text-gray-500 mt-1">Max: ${run.maxParticipants} | Filled: ${count}</div>
+                        </div>
+                        <div>${btnHtml}</div>
+                    `;
+
+                    if(!isDisabled && !program.nominationUrl) {
+                        el.querySelector('.register-btn').onclick = () => openRegistrationModal(program, run);
+                    }
+                    
+                    runsList.appendChild(el);
+                });
+            });
+        }
+
+        // 3. REGISTRATION MODAL
+        function openRegistrationModal(program, run, isEducatorMode = false) {
+            const existing = document.getElementById('reg-modal');
+            if(existing) existing.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'reg-modal';
+            modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 backdrop-blur-sm';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-fade-in-up flex flex-col max-h-[90vh]">
+                    <div class="bg-blue-600 p-4 text-white flex justify-between items-center flex-shrink-0">
+                        <h3 class="font-bold">${isEducatorMode ? 'Educator: Add Participant' : 'Register'} for ${program.name}</h3>
+                        <button id="close-modal" class="text-white hover:text-gray-200"><i class="fas fa-times"></i></button>
+                    </div>
+                    <form id="reg-form" class="p-6 space-y-4 overflow-y-auto flex-grow">
+                         <div class="bg-blue-50 border-l-4 border-blue-400 p-3 text-xs text-blue-700 mb-2">
+                            <p class="font-bold mb-1">Schedule:</p>
+                            ${formatDateTimeRange(run.startDate, run.endDate)}<br>
+                            @ ${run.venue || 'TBD'} (${run.site || 'Global City'})
+                        </div>
+                        
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 uppercase">Employee/Dr. No</label>
+                            <input type="text" name="empNo" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                        </div>
+
+                        <!-- Last Name and First Name on same row -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500">Last Name</label>
+                                <input type="text" name="lastName" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500">First Name</label>
+                                <input type="text" name="firstName" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500">Contact No.</label>
+                                <input type="text" name="contact" class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500 font-bold">Email Address</label>
+                                <input type="email" name="email" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                        </div>
+                        
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs text-gray-500">Functional Group</label>
+                                <input type="text" name="functionalGroup" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-500">Department</label>
+                                <input type="text" name="department" required class="w-full border rounded p-2 mt-1 focus:ring-2 focus:ring-blue-500 outline-none">
+                            </div>
+                        </div>
+
+                        <p class="text-xs text-gray-500 italic">
+                            Note: You will receive updates about the training program a couple of days before the training run.
+                        </p>
+
+                        <button type="submit" class="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition">Confirm Registration</button>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            document.getElementById('close-modal').onclick = () => modal.remove();
+            
+            document.getElementById('reg-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const btn = e.target.querySelector('button');
+                const originalText = btn.innerText;
+                btn.innerText = 'Processing...';
+                btn.disabled = true;
+
+                const formData = new FormData(e.target);
+                const data = Object.fromEntries(formData.entries());
+
+                // 1. Check double booking
+                const q = query(getColRef('registrations'), where('runId', '==', run.id), where('empNo', '==', data.empNo));
+                const snap = await getDocs(q);
+                if (!snap.empty) {
+                    showToast("User already registered for this session.", 'error');
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                    return;
+                }
+
+                const code = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+                try {
+                    await addDoc(getColRef('registrations'), {
+                        ...data,
+                        programId: program.id,
+                        runId: run.id,
+                        venue: run.venue || 'TBD', 
+                        site: run.site || 'Global City',
+                        confirmationCode: code,
+                        programName: program.name, 
+                        runDate: run.startDate, // Legacy field for easy sorting
+                        startDate: run.startDate,
+                        endDate: run.endDate,
+                        createdAt: new Date().toISOString()
+                    });
+
+                    await sendEmail('registration', {
+                        email: data.email,
+                        programName: program.name,
+                        startDate: run.startDate,
+                        endDate: run.endDate,
+                        venue: run.venue,
+                        site: run.site || 'Global City', // Use run site
+                        confirmationCode: code
+                    });
+
+                    modal.remove();
+                    
+                    if(isEducatorMode) {
+                        showToast("Participant Registered Successfully", "success");
+                        // Refresh logic for educator view
+                         const snap = await getDoc(doc(getColRef('programs'), program.id));
+                         renderEducatorProgram({id: program.id, ...snap.data()});
+                    } else {
+                        showSuccessModal(
+                            'Registration Successful', 
+                            `You have been successfully registered.<br><br>
+                             <span class="block text-xl font-bold text-blue-600 bg-blue-50 p-2 rounded border border-blue-200">${code}</span><br>
+                             Please save this confirmation code. A copy has been sent to your email.`,
+                            () => router.navigate('home')
+                        );
+                    }
+
+                } catch (err) {
+                    console.error(err);
+                    showToast("Registration failed. Please try again.", 'error');
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                }
+            };
+        }
+
+        // 4. MY REGISTRATION (Manage)
+        function renderMyRegistration() {
+            root.innerHTML = `
+                <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6">Manage Registration</h2>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700">Enter Confirmation Code</label>
+                        <div class="flex mt-1">
+                            <input type="text" id="code-input" class="flex-grow border rounded-l-lg p-2 focus:ring-2 focus:ring-blue-500 outline-none uppercase" placeholder="e.g. X7Z9A2">
+                            <button onclick="lookupRegistration()" class="bg-blue-600 text-white px-4 rounded-r-lg hover:bg-blue-700">Find</button>
+                        </div>
+                    </div>
+                    <div id="reg-details" class="hidden border-t pt-4 mt-4">
+                        <!-- Details here -->
+                    </div>
+                </div>
+            `;
+        }
+
+        window.lookupRegistration = async () => {
+            const code = document.getElementById('code-input').value.trim().toUpperCase();
+            if(!code) return showToast("Please enter a code", 'error');
+
+            const container = document.getElementById('reg-details');
+            container.innerHTML = '<div class="loader mx-auto"></div>';
+            container.classList.remove('hidden');
+
+            const q = query(getColRef('registrations'), where('confirmationCode', '==', code));
+            const snap = await getDocs(q);
+
+            if(snap.empty) {
+                container.innerHTML = '<p class="text-red-500 text-center">Registration not found.</p>';
+                return;
+            }
+
+            const docSnap = snap.docs[0];
+            const data = docSnap.data();
+            const regId = docSnap.id;
+            // Use startDate for past check if available, else fallback to old runDate
+            const dateToCheck = data.startDate || data.runDate;
+            const isPast = new Date(dateToCheck) < new Date();
+
+            container.innerHTML = `
+                <div class="space-y-3">
+                    <div><span class="text-xs text-gray-500 uppercase">Program</span><div class="font-bold">${data.programName}</div></div>
+                    <div><span class="text-xs text-gray-500 uppercase">Schedule</span><div class="font-bold text-sm">${formatDateTimeRange(data.startDate, data.endDate)}</div></div>
+                    <div><span class="text-xs text-gray-500 uppercase">Venue</span><div class="font-bold">${data.venue || 'TBD'}</div></div>
+                    <div><span class="text-xs text-gray-500 uppercase">Participant</span><div class="font-bold">${data.firstName} ${data.lastName}</div></div>
+                    
+                    ${isPast ? '<div class="bg-gray-100 p-2 text-center text-sm text-gray-500 rounded">This event has concluded.</div>' : 
+                    `<button onclick="cancelRegistration('${regId}', '${data.programName}', '${dateToCheck}', '${data.email}', '${data.site || 'Global City'}')" class="w-full bg-red-100 text-red-700 py-2 rounded font-medium hover:bg-red-200 mt-4">Cancel Registration</button>`}
+                </div>
+            `;
+        };
+
+        window.cancelRegistration = async (id, name, date, email, site) => {
+            showConfirmationModal("Are you sure you want to cancel this registration? This action cannot be undone.", async () => {
+                try {
+                    await deleteDoc(doc(getColRef('registrations'), id));
+                    sendEmail('cancellation', {
+                        email: email,
+                        programName: name,
+                        startDate: date, // Assuming date passed is start date string
+                        endDate: date, // Dummy end date for cancel email
+                        venue: 'TBD',
+                        site: site || 'Global City'
+                    }).catch(e => console.warn("Email warning", e));
+
+                    showSuccessModal("Cancelled", "Registration has been cancelled successfully.", () => router.navigate('home'));
+                } catch (err) {
+                    console.error("Delete failed:", err);
+                    showToast("Error cancelling registration. Permission issue?", 'error');
+                }
+            });
+        };
+
+        // 5. EDUCATOR AUTH
+        function renderEducatorLogin() {
+            root.innerHTML = `
+                <div class="max-w-sm mx-auto bg-white p-8 rounded-xl shadow-lg mt-10">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Educator Login</h2>
+                    <form id="login-form" class="space-y-4">
+                        <input type="email" name="email" placeholder="Email" required class="w-full border p-2 rounded">
+                        <input type="password" name="password" placeholder="Password" required class="w-full border p-2 rounded">
+                        <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">Login</button>
+                    </form>
+                </div>
+            `;
+
+            document.getElementById('login-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const email = e.target.email.value;
+                const password = e.target.password.value;
+                try {
+                    await signInWithEmailAndPassword(auth, email, password);
+                } catch (err) {
+                    showToast("Login failed: " + err.message, 'error');
+                }
+            };
+        }
+
+        document.getElementById('educator-login-btn').onclick = () => {
+            if(state.isEducator) router.navigate('educator-dashboard');
+            else router.navigate('educator-login');
+        };
+
+        // 6. EDUCATOR DASHBOARD
+        async function renderEducatorDashboard() {
+            if (!state.isEducator) return router.navigate('educator-login');
+
+            root.innerHTML = `
+                <div class="flex justify-between items-center mb-6">
+                    <h1 class="text-2xl font-bold">Manage Programs</h1>
+                    <button onclick="openAddProgramModal()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700"><i class="fas fa-plus"></i> Add Program</button>
+                </div>
+                <div class="bg-white rounded-lg shadow overflow-hidden">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Program</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="edu-prog-list" class="bg-white divide-y divide-gray-200"></tbody>
+                    </table>
+                </div>
+            `;
+
+            const snap = await getDocs(getColRef('programs'));
+            const list = document.getElementById('edu-prog-list');
+            
+            snap.docs.forEach(d => {
+                const p = d.data();
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="flex items-center">
+                            <div class="h-10 w-10 flex-shrink-0">
+                                <img class="h-10 w-10 rounded-full object-cover" src="${p.posterUrl}" onerror="this.src='https://via.placeholder.com/40'">
+                            </div>
+                            <div class="ml-4">
+                                <div class="text-sm font-medium text-gray-900">${p.name}</div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${p.nominationUrl ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800'}">
+                            ${p.nominationUrl ? 'Nomination' : 'Registration'}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <button onclick="manageProgram('${d.id}')" class="text-blue-600 hover:text-blue-900 mr-2">Manage Runs</button>
+                        <button onclick="openEditProgramModal('${d.id}')" class="text-indigo-600 hover:text-indigo-900 mr-2">Edit</button>
+                        <button onclick="deleteProgram('${d.id}')" class="text-red-600 hover:text-red-900">Delete</button>
+                    </td>
+                `;
+                list.appendChild(tr);
+            });
+        }
+
+        window.openAddProgramModal = (isEdit = false, id = null, currentData = null) => {
+             const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+                    <h3 class="text-lg font-bold mb-4">${isEdit ? 'Edit' : 'Add New'} Program</h3>
+                    <form id="prog-form" class="space-y-4">
+                        <input name="name" placeholder="Program Name" required class="w-full border p-2 rounded" value="${currentData ? currentData.name : ''}">
+                        
+                        <textarea name="details" placeholder="Program Details" required class="w-full border p-2 rounded h-24">${currentData ? currentData.details : ''}</textarea>
+                        <input name="posterUrl" placeholder="Imgur Poster URL" required class="w-full border p-2 rounded" value="${currentData ? currentData.posterUrl : ''}">
+                        <div>
+                            <label class="block text-xs text-gray-500 mb-1">Nomination URL (Optional)</label>
+                            <input name="nominationUrl" placeholder="https://forms.google.com..." class="w-full border p-2 rounded" value="${currentData ? currentData.nominationUrl || '' : ''}">
+                        </div>
+                        <div class="flex justify-end space-x-2">
+                            <button type="button" onclick="this.closest('.fixed').remove()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+            document.getElementById('prog-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const data = Object.fromEntries(new FormData(e.target));
+                if(isEdit) {
+                    await updateDoc(doc(getColRef('programs'), id), data);
+                } else {
+                    await addDoc(getColRef('programs'), data);
+                }
+                modal.remove();
+                renderEducatorDashboard();
+            }
+        };
+
+        window.openEditProgramModal = async (id) => {
+            const snap = await getDoc(doc(getColRef('programs'), id));
+            window.openAddProgramModal(true, id, snap.data());
+        }
+
+        window.deleteProgram = async (id) => {
+            showConfirmationModal("Delete this program? Note: Associated runs and registrations might become orphaned.", async () => {
+                await deleteDoc(doc(getColRef('programs'), id));
+                renderEducatorDashboard();
+            });
+        }
+
+        window.manageProgram = async (id) => {
+            const snap = await getDoc(doc(getColRef('programs'), id));
+            router.navigate('educator-program', {id: id, ...snap.data()});
+        };
+
+        // 7. EDUCATOR PROGRAM VIEW (Runs & Participants)
+        async function renderEducatorProgram(program) {
+            root.innerHTML = `
+                 <button onclick="router.navigate('educator-dashboard')" class="text-gray-400 hover:text-gray-600 mb-4"><i class="fas fa-arrow-left"></i> Back to Dashboard</button>
+                 <div class="flex justify-between items-start mb-6">
+                    <div>
+                        <h1 class="text-2xl font-bold">${program.name}</h1>
+                        <p class="text-gray-500">Manage schedule and participants</p>
+                    </div>
+                    <button onclick="openAddRunModal('${program.id}')" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Add Run</button>
+                </div>
+                
+                <div id="edu-runs-container" class="space-y-6"></div>
+            `;
+
+            const runsSnap = await getDocs(query(getColRef('runs'), where('programId', '==', program.id)));
+            const container = document.getElementById('edu-runs-container');
+            const runs = runsSnap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => new Date(a.startDate) - new Date(b.startDate));
+
+            if(runs.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No runs scheduled.</p>';
+                return;
+            }
+
+            for(const run of runs) {
+                const pSnap = await getDocs(query(getColRef('registrations'), where('runId', '==', run.id)));
+                
+                const runEl = document.createElement('div');
+                runEl.className = "bg-white border rounded-lg shadow-sm overflow-hidden";
+                runEl.innerHTML = `
+                    <div class="bg-gray-50 px-6 py-4 border-b flex justify-between items-center">
+                        <div>
+                            <h3 class="font-bold text-gray-800">${formatDateTimeRange(run.startDate, run.endDate)}</h3>
+                            <p class="text-xs text-gray-500">
+                                <span class="font-semibold text-blue-600">${run.site || 'Global City'}</span> |
+                                <i class="fas fa-map-marker-alt"></i> ${run.venue || 'TBD'} | Capacity: ${run.maxParticipants}
+                            </p>
+                        </div>
+                        <div class="flex space-x-2 items-center">
+                             <button id="add-part-${run.id}" class="text-blue-600 hover:text-blue-800 text-sm font-medium border border-blue-200 bg-white px-3 py-1 rounded"><i class="fas fa-user-plus"></i> Add Participant</button>
+                             <span class="text-gray-300">|</span>
+                             <button onclick="downloadCSV('${run.id}')" class="text-green-600 hover:text-green-800 text-sm font-medium"><i class="fas fa-file-csv"></i> Export CSV</button>
+                             <span class="text-gray-300">|</span>
+                             <button onclick="deleteRun('${run.id}')" class="text-red-500 hover:text-red-700 text-sm"><i class="fas fa-trash"></i> Delete</button>
+                        </div>
+                    </div>
+                    <div class="p-6">
+                        <div class="overflow-x-auto">
+                            <table class="min-w-full text-sm">
+                                <thead class="bg-gray-100">
+                                    <tr>
+                                        <th class="px-4 py-2 text-left">Emp No</th>
+                                        <th class="px-4 py-2 text-left">Name</th>
+                                        <th class="px-4 py-2 text-left">Group/Dept</th>
+                                        <th class="px-4 py-2 text-left">Email</th>
+                                        <th class="px-4 py-2 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="participants-${run.id}"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(runEl);
+                
+                // Add event listener for dynamic button
+                document.getElementById(`add-part-${run.id}`).onclick = () => openRegistrationModal(program, run, true);
+
+                const tbody = document.getElementById(`participants-${run.id}`);
+                
+                if(pSnap.empty) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-2 text-gray-400 text-center">No registrations yet</td></tr>';
+                } else {
+                    pSnap.docs.forEach(pd => {
+                        const part = pd.data();
+                        const row = document.createElement('tr');
+                        row.className = "border-t";
+                        row.innerHTML = `
+                            <td class="px-4 py-2">${part.empNo}</td>
+                            <td class="px-4 py-2">
+                                <div>${part.lastName}, ${part.firstName}</div>
+                                <div class="text-xs text-gray-500">${part.contact || ''}</div>
+                            </td>
+                            <td class="px-4 py-2">
+                                <div class="font-medium">${part.functionalGroup || '-'}</div>
+                                <div class="text-xs text-gray-500">${part.department || '-'}</div>
+                            </td>
+                            <td class="px-4 py-2">${part.email}</td>
+                            <td class="px-4 py-2 text-right">
+                                <button onclick="removeParticipant('${pd.id}', '${program.name}', '${run.startDate}', '${part.email}', '${part.site || 'Global City'}')" class="text-red-500 hover:underline">Remove</button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                }
+            }
+        }
+
+        window.downloadCSV = async (runId) => {
+            try {
+                const snap = await getDocs(query(getColRef('registrations'), where('runId', '==', runId)));
+                if(snap.empty) return showToast("No participants to export.");
+                
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "EmployeeNo,LastName,FirstName,Contact,Email,FunctionalGroup,Department,RegistrationDate\n";
+                
+                snap.docs.forEach(d => {
+                    const p = d.data();
+                    const row = [
+                        p.empNo, p.lastName, p.firstName, p.contact || '', p.email, 
+                        p.functionalGroup || '', p.department || '', p.createdAt
+                    ].map(item => `"${item}"`).join(",");
+                    csvContent += row + "\n";
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `participants_${runId}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+            } catch (err) {
+                console.error(err);
+                showToast("Export failed", 'error');
+            }
+        };
+
+        window.openAddRunModal = (programId) => {
+             const modal = document.createElement('div');
+            modal.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4';
+            modal.innerHTML = `
+                <div class="bg-white rounded-xl shadow-xl max-w-sm w-full p-6">
+                    <h3 class="text-lg font-bold mb-4">Add Program Run</h3>
+                    <form id="add-run-form" class="space-y-4">
+                        <div class="grid grid-cols-2 gap-2">
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500">Start</label>
+                                <input type="datetime-local" name="startDate" required class="w-full border p-2 rounded text-sm">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-gray-500">End</label>
+                                <input type="datetime-local" name="endDate" required class="w-full border p-2 rounded text-sm">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500 mb-1">Site</label>
+                            <select name="site" class="w-full border p-2 rounded">
+                                <option value="Global City">Global City</option>
+                                <option value="Quezon City">Quezon City</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500">Venue</label>
+                            <input type="text" name="venue" required class="w-full border p-2 rounded" placeholder="e.g. Conference Room A">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-500">Max Participants</label>
+                            <input type="number" name="maxParticipants" required class="w-full border p-2 rounded">
+                        </div>
+                        <div class="flex justify-end space-x-2">
+                            <button type="button" onclick="this.closest('.fixed').remove()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+                        </div>
+                    </form>
+                </div>
+            `;
+            document.body.appendChild(modal);
+             document.getElementById('add-run-form').onsubmit = async (e) => {
+                e.preventDefault();
+                const data = Object.fromEntries(new FormData(e.target));
+                // Convert datetime-local to ISO string
+                data.startDate = new Date(data.startDate).toISOString();
+                data.endDate = new Date(data.endDate).toISOString();
+                data.date = data.startDate; // Legacy support
+                data.programId = programId;
+                
+                await addDoc(getColRef('runs'), data);
+                modal.remove();
+                
+                // Refresh logic
+                const snap = await getDoc(doc(getColRef('programs'), programId));
+                renderEducatorProgram({id: programId, ...snap.data()});
+            }
+        };
+
+        window.deleteRun = async (runId) => {
+            showConfirmationModal("Delete this run? Registrations will remain in database but will be orphaned.", async () => {
+                try {
+                    await deleteDoc(doc(getColRef('runs'), runId));
+                    showToast("Run deleted");
+                    const btn = document.querySelector('button[onclick^="router.navigate(\'educator-dashboard\')"]');
+                    if(btn) btn.click(); 
+                } catch(e) {
+                    console.error(e);
+                    showToast("Error deleting run", 'error');
+                }
+            });
+        };
+
+        window.removeParticipant = async (regId, progName, date, email, site) => {
+             showConfirmationModal("Remove this participant? They will receive a cancellation email.", async () => {
+                 try {
+                    await deleteDoc(doc(getColRef('registrations'), regId));
+                    // Send email
+                    sendEmail('cancellation', {
+                        email: email,
+                        programName: progName,
+                        startDate: date,
+                        endDate: date, // Dummy
+                        venue: 'TBD',
+                        site: site || 'Global City'
+                    });
+                    showToast("Participant removed");
+                    const btn = document.querySelector('button[onclick^="router.navigate(\'educator-dashboard\')"]');
+                    if(btn) btn.click();
+                 } catch (e) {
+                     console.error(e);
+                     showToast("Error removing participant", 'error');
+                 }
+             });
+        };
+
+        async function getParticipantsCount(runId) {
+            const q = query(getColRef('registrations'), where('runId', '==', runId));
+            const snap = await getDocs(q);
+            return snap.size;
+        }
+
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                state.isEducator = !user.isAnonymous;
+                state.user = user;
+                if(state.isEducator && state.view === 'educator-login') {
+                    router.navigate('educator-dashboard');
+                }
+            } else {
+                state.isEducator = false;
+                state.user = null;
+                await signInAnonymously(auth);
+            }
+            renderAuthHeader();
+        });
+
+        renderHome();
+        
+    </script>
+</body>
+</html>
