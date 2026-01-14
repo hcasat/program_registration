@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hospital L&D Portal</title>
+    <title>Systems and Technical Training</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- FontAwesome -->
@@ -102,7 +102,7 @@
         import { getFirestore, collection, addDoc, getDocs, doc, updateDoc, deleteDoc, query, where, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
 
         // --- CONFIGURATION ---
-        const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbz8IY4p9Jlfit6JPGZmIy2t7YX3K9-VvbacAa3Jb5DTRavVD3-cipOm8kKExL_n40Z3/exec"; 
+        const GAS_ENDPOINT = "https://script.google.com/macros/s/AKfycbycNgeMR81foRyHO5usphSggHiO4bSabyjIBuOHEGFUgQ84PbRUXHrUo_hhLGkFMQY/exec"; 
         
         const firebaseConfig = {
              apiKey: "AIzaSyBSS4XyJYWeydlrn6SqwJBhT7M06rMNU1E",
@@ -592,22 +592,35 @@
                     <div><span class="text-xs text-gray-500 uppercase">Participant</span><div class="font-bold">${data.firstName} ${data.lastName}</div></div>
                     
                     ${isPast ? '<div class="bg-gray-100 p-2 text-center text-sm text-gray-500 rounded">This event has concluded.</div>' : 
-                    `<button onclick="cancelRegistration('${regId}', '${data.programName}', '${dateToCheck}', '${data.email}', '${data.site || 'Global City'}')" class="w-full bg-red-100 text-red-700 py-2 rounded font-medium hover:bg-red-200 mt-4">Cancel Registration</button>`}
+                    `<button onclick="cancelRegistration('${regId}')" class="w-full bg-red-100 text-red-700 py-2 rounded font-medium hover:bg-red-200 mt-4">Cancel Registration</button>`}
                 </div>
             `;
         };
 
-        window.cancelRegistration = async (id, name, date, email, site) => {
+        window.cancelRegistration = async (id) => {
+            // Updated to fetch data first to prevent escaping errors and ensure data accuracy
             showConfirmationModal("Are you sure you want to cancel this registration? This action cannot be undone.", async () => {
                 try {
+                    // Fetch doc first to get email/program/venue info
+                    const docSnap = await getDoc(doc(getColRef('registrations'), id));
+                    if (!docSnap.exists()) {
+                        showToast("Registration already deleted", 'error');
+                        router.navigate('home');
+                        return;
+                    }
+                    const data = docSnap.data();
+
+                    // Delete
                     await deleteDoc(doc(getColRef('registrations'), id));
+                    
+                    // Send Email with fetched data
                     sendEmail('cancellation', {
-                        email: email,
-                        programName: name,
-                        startDate: date, // Assuming date passed is start date string
-                        endDate: date, // Dummy end date for cancel email
-                        venue: 'TBD',
-                        site: site || 'Global City'
+                        email: data.email,
+                        programName: data.programName,
+                        startDate: data.startDate,
+                        endDate: data.endDate,
+                        venue: data.venue || 'TBD',
+                        site: data.site || 'Global City'
                     }).catch(e => console.warn("Email warning", e));
 
                     showSuccessModal("Cancelled", "Registration has been cancelled successfully.", () => router.navigate('home'));
@@ -845,7 +858,7 @@
                             </td>
                             <td class="px-4 py-2">${part.email}</td>
                             <td class="px-4 py-2 text-right">
-                                <button onclick="removeParticipant('${pd.id}', '${program.name}', '${run.startDate}', '${part.email}', '${part.site || 'Global City'}')" class="text-red-500 hover:underline">Remove</button>
+                                <button onclick="removeParticipant('${pd.id}')" class="text-red-500 hover:underline">Remove</button>
                             </td>
                         `;
                         tbody.appendChild(row);
@@ -956,19 +969,26 @@
             });
         };
 
-        window.removeParticipant = async (regId, progName, date, email, site) => {
+        window.removeParticipant = async (regId) => {
              showConfirmationModal("Remove this participant? They will receive a cancellation email.", async () => {
                  try {
+                     // Fetch doc first for email data
+                    const docSnap = await getDoc(doc(getColRef('registrations'), regId));
+                    const data = docSnap.exists() ? docSnap.data() : null;
+
                     await deleteDoc(doc(getColRef('registrations'), regId));
-                    // Send email
-                    sendEmail('cancellation', {
-                        email: email,
-                        programName: progName,
-                        startDate: date,
-                        endDate: date, // Dummy
-                        venue: 'TBD',
-                        site: site || 'Global City'
-                    });
+                    
+                    if(data) {
+                        sendEmail('cancellation', {
+                            email: data.email,
+                            programName: data.programName,
+                            startDate: data.startDate,
+                            endDate: data.endDate,
+                            venue: data.venue || 'TBD',
+                            site: data.site || 'Global City'
+                        }).catch(e => console.warn("Email warning", e));
+                    }
+                    
                     showToast("Participant removed");
                     const btn = document.querySelector('button[onclick^="router.navigate(\'educator-dashboard\')"]');
                     if(btn) btn.click();
